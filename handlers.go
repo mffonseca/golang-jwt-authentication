@@ -14,8 +14,7 @@ import (
 var jwtKey = []byte(os.Getenv("JWT_KEY"))
 
 var users = map[string]string{
-	"user1": "password1",
-	"user2": "password2",
+	"admin": "123456",
 }
 
 type Credentials struct {
@@ -29,19 +28,62 @@ type Claims struct {
 }
 
 func handleError(w http.ResponseWriter, status int) {
+	log.Info("Handling error")
 	w.WriteHeader(status)
 }
 
 func handleUnauthorized(w http.ResponseWriter) {
+	log.Info("Unauthorized")
 	handleError(w, http.StatusUnauthorized)
 }
 
 func handleBadRequest(w http.ResponseWriter) {
+	log.Info("Bad request")
 	handleError(w, http.StatusBadRequest)
 }
 
 func handleInternalError(w http.ResponseWriter) {
+	log.Info("Internal server error")
 	handleError(w, http.StatusInternalServerError)
+}
+
+func AuthenticationMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Your middleware logic goes here. For example:
+		c, err := r.Cookie("token")
+		if err != nil {
+			if err == http.ErrNoCookie {
+				handleUnauthorized(w)
+				return
+			}
+			handleBadRequest(w)
+			return
+		}
+
+		tknStr := c.Value
+		claims := &Claims{}
+
+		tkn, err := jwt.ParseWithClaims(tknStr, claims, func(token *jwt.Token) (interface{}, error) {
+			return jwtKey, nil
+		})
+
+		if err != nil {
+			if err == jwt.ErrSignatureInvalid {
+				handleUnauthorized(w)
+				return
+			}
+			handleBadRequest(w)
+			return
+		}
+
+		if !tkn.Valid {
+			handleUnauthorized(w)
+			return
+		}
+
+		// Call the next handler.
+		next.ServeHTTP(w, r)
+	})
 }
 
 func Signin(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +101,7 @@ func Signin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	expectedPassword, ok := users[creds.Username]
+
 	if !ok || expectedPassword != creds.Password {
 		handleUnauthorized(w)
 		return
@@ -78,10 +121,12 @@ func Signin(w http.ResponseWriter, r *http.Request) {
 	tokenString, err := token.SignedString(jwtKey)
 
 	if err != nil {
-		log.WithError(err).Error("Erro ao gerar o token JWT")
+		log.WithError(err).Error("Error generating the JWT token")
 		handleInternalError(w)
 		return
 	}
+
+	log.Info("Login successful")
 
 	http.SetCookie(w, &http.Cookie{
 		Name:    "token",
@@ -90,49 +135,14 @@ func Signin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func Welcome(w http.ResponseWriter, r *http.Request) {
-
-	c, err := r.Cookie("token")
-
-	if err != nil {
-		if err == http.ErrNoCookie {
-			handleUnauthorized(w)
-			return
-		}
-		handleBadRequest(w)
-		return
-	}
-
-	tknStr := c.Value
-	claims := &Claims{}
-
-	tkn, err := jwt.ParseWithClaims(tknStr, claims, func(token *jwt.Token) (interface{}, error) {
-		return jwtKey, nil
-	})
-
-	if err != nil {
-		if err == jwt.ErrSignatureInvalid {
-			handleUnauthorized(w)
-			return
-		}
-		handleBadRequest(w)
-		return
-	}
-
-	if !tkn.Valid {
-		handleUnauthorized(w)
-		return
-	}
-
-	w.Write([]byte("Welcome " + claims.Username + "!"))
-}
-
 func Refresh(w http.ResponseWriter, r *http.Request) {
 
 	c, err := r.Cookie("token")
 
 	if err != nil {
+		log.WithError(err).Error("Error getting the cookie")
 		if err == http.ErrNoCookie {
+			log.WithError(err).Error("No cookie found")
 			handleUnauthorized(w)
 			return
 		}
@@ -148,7 +158,9 @@ func Refresh(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
+		log.WithError(err).Error("Error parsing the JWT token")
 		if err == jwt.ErrSignatureInvalid {
+			log.WithError(err).Error("Invalid signature")
 			handleUnauthorized(w)
 			return
 		}
@@ -158,11 +170,6 @@ func Refresh(w http.ResponseWriter, r *http.Request) {
 
 	if !tkn.Valid {
 		handleUnauthorized(w)
-		return
-	}
-
-	if time.Until(claims.ExpiresAt.Time) > 30*time.Second {
-		handleBadRequest(w)
 		return
 	}
 
@@ -183,8 +190,13 @@ func Refresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func Logout(w http.ResponseWriter, r *http.Request) {
+
+	log.Info("Received logout request")
+
 	http.SetCookie(w, &http.Cookie{
 		Name:    "token",
 		Expires: time.Now(),
 	})
+
+	log.Info("Logout successful")
 }
