@@ -8,24 +8,40 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const serverPort = ":8080"
+
 func main() {
 
+	// Set the log format to JSON
 	log.SetFormatter(&log.JSONFormatter{})
 
+	// Set the log level to Debug
 	log.SetLevel(log.DebugLevel)
 
-	err := godotenv.Load()
+	// Load environment variables from .env file
+	errEnv := godotenv.Load()
 
-	if err != nil {
-		log.Fatal("Error getting environment variables")
+	if errEnv != nil {
+		log.Fatal("Error getting environment variables: ", errEnv)
 	}
 
+	// Initialize router
 	router := mux.NewRouter()
 
+	// Setup routes
 	router.HandleFunc("/signin", Signin).Methods("POST")
-	router.HandleFunc("/welcome", Welcome).Methods("GET")
+	router.Handle("/welcome", AuthenticationMiddleware(http.HandlerFunc(Welcome))).Methods("GET")
 	router.HandleFunc("/refresh", Refresh).Methods("POST")
 	router.HandleFunc("/logout", Logout).Methods("GET")
 
-	log.Fatal(http.ListenAndServe(":8080", router))
+	// Start the server
+	errListen := http.ListenAndServe(serverPort, router)
+
+	// If there was an error starting the server, log it and exit
+	if errListen != nil {
+		log.Fatalf("There was an error starting the server: %v", errListen)
+	}
+
+	log.Info("Server started on port " + serverPort)
+
 }
